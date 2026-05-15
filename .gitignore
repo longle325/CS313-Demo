@@ -12,3 +12,23 @@ vite.config.d.ts
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Python / notebook local artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Secrets and credentials
+.gbif.env
+credentials/
+*.json.key
+*service-account*.json
+
+# Pipeline caches and generated reports
+notebook_worktree/datamining/raw/
+notebook_worktree/reports/
+notebook_worktree/logs/
+notebook_worktree/backups/
+notebook_worktree/archive/
+*.zip

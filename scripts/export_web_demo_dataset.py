@@ -3,9 +3,9 @@ from pathlib import Path
 import pandas as pd
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 PROCESSED = ROOT / "notebook_worktree" / "datamining" / "processed"
-OUTPUT = Path(__file__).resolve().parents[1] / "public" / "data" / "dataset.csv"
+OUTPUT = ROOT / "public" / "data" / "dataset.csv"
 
 
 def main() -> None:
