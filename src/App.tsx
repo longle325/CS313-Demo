@@ -95,7 +95,9 @@ function App() {
                 <h2>{METRICS[selectedMetric].label} in Vietnam, {selectedYear}</h2>
               </div>
               <p>
-                Points are Vietnam grid-year records from GBIF, Hansen forest data, and available Open-Meteo weather.
+                Points are Vietnam grid-year records from GBIF and Hansen forest data.
+                <br />
+                Available Open-Meteo weather is shown when present.
               </p>
             </div>
             <VietnamMap

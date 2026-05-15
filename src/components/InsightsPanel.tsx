@@ -1,7 +1,7 @@
 import { BarChart3, Crosshair, RotateCcw } from 'lucide-react';
 import type { BiodiversityRecord, DatasetSummary, MetricKey } from '../types';
 import { METRIC_KEYS, METRICS } from '../utils/biodiversityMetrics';
-import { formatCoordinate, formatNumber } from '../utils/formatters';
+import { formatCompact, formatCoordinate, formatNumber } from '../utils/formatters';
 
 type InsightsPanelProps = {
   years: number[];
@@ -33,6 +33,13 @@ export function InsightsPanel({
   onReset,
 }: InsightsPanelProps) {
   const metricDefinition = METRICS[metric];
+  type DetailItem = {
+    id: string;
+    label: string;
+    value: string;
+  };
+  const yearIndex = years.indexOf(year);
+  const resolvedYearIndex = yearIndex === -1 ? Math.max(0, years.length - 1) : yearIndex;
   const rankedRecords = records
     .slice()
     .sort((a, b) => b[metric] - a[metric])
@@ -41,19 +48,35 @@ export function InsightsPanel({
   const selectedDetails = activeRecord
     ? [
         {
+          id: metric,
           label: metricDefinition.shortLabel,
           value: metricDefinition.format(activeRecord[metric]),
         },
         metric === 'normalizedRichness'
           ? null
           : {
+              id: 'normalizedRichness',
               label: 'Richness',
               value: METRICS.normalizedRichness.format(activeRecord.normalizedRichness),
             },
-        { label: 'Species', value: formatNumber(activeRecord.nSpecies) },
-        { label: 'Observations', value: formatNumber(activeRecord.nObservations) },
-        { label: 'Forest loss', value: METRICS.forestLossHa.format(activeRecord.forestLossHa) },
-      ].filter((item): item is { label: string; value: string } => item !== null)
+        metric === 'nSpecies'
+          ? null
+          : { id: 'nSpecies', label: 'Species', value: formatNumber(activeRecord.nSpecies) },
+        metric === 'nObservations'
+          ? null
+          : {
+              id: 'nObservations',
+              label: 'Observations',
+              value: formatNumber(activeRecord.nObservations),
+            },
+        metric === 'forestLossHa'
+          ? null
+          : {
+              id: 'forestLossHa',
+              label: 'Forest loss',
+              value: METRICS.forestLossHa.format(activeRecord.forestLossHa),
+            },
+      ].filter((item): item is DetailItem => item !== null)
     : [];
 
   return (
@@ -69,15 +92,25 @@ export function InsightsPanel({
       </div>
 
       <section className="compact-controls" aria-label="Filters">
-        <div className="control-row">
-          <label htmlFor="year">Year</label>
-          <select id="year" value={year} onChange={(event) => onYearChange(Number(event.target.value))}>
-            {years.map((availableYear) => (
-              <option value={availableYear} key={availableYear}>
-                {availableYear}
-              </option>
-            ))}
-          </select>
+        <div className="range-control">
+          <div>
+            <label htmlFor="year">Year</label>
+            <span>{year}</span>
+          </div>
+          <input
+            id="year"
+            min="0"
+            max={Math.max(0, years.length - 1)}
+            step="1"
+            type="range"
+            value={resolvedYearIndex}
+            disabled={years.length === 0}
+            onChange={(event) => {
+              const nextIndex = Number(event.target.value);
+              const nextYear = years[nextIndex];
+              if (nextYear !== undefined) onYearChange(nextYear);
+            }}
+          />
         </div>
 
         <div className="control-row">
@@ -118,8 +151,8 @@ export function InsightsPanel({
           <p>points shown</p>
         </article>
         <article>
-          <span>{formatNumber(summary.gridCells)}</span>
-          <p>grid cells</p>
+          <span>{formatCompact(summary.totalObservations)}</span>
+          <p>observations</p>
         </article>
         <article>
           <span>{formatNumber(summary.averageRichness, 2)}</span>
@@ -134,13 +167,15 @@ export function InsightsPanel({
         </div>
         {activeRecord ? (
           <>
-            <strong>{activeRecord.gridId}</strong>
-            <p>
-              {formatCoordinate(activeRecord.lat)}, {formatCoordinate(activeRecord.lon)}
-            </p>
+            <div className="selected-meta">
+              <strong>{activeRecord.gridId}</strong>
+              <span>
+                {formatCoordinate(activeRecord.lat)}, {formatCoordinate(activeRecord.lon)}
+              </span>
+            </div>
             <dl>
               {selectedDetails.map((detail) => (
-                <div key={detail.label}>
+                <div key={detail.id}>
                   <dt>{detail.label}</dt>
                   <dd>{detail.value}</dd>
                 </div>
@@ -172,9 +207,6 @@ export function InsightsPanel({
               >
                 <span>
                   <strong>{record.gridId}</strong>
-                  <small>
-                    {formatCoordinate(record.lat)}, {formatCoordinate(record.lon)}
-                  </small>
                 </span>
                 <em>{metricDefinition.format(record[metric])}</em>
               </button>
