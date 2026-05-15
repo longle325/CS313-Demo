@@ -10,10 +10,19 @@ import { formatCompact, formatNumber } from './formatters';
 type RawBiodiversityRow = Record<string, string | number | undefined>;
 
 export const METRICS: Record<MetricKey, MetricDefinition> = {
+  predictedRichness: {
+    key: 'predictedRichness',
+    label: 'Biodiversity richness index',
+    shortLabel: 'Richness index',
+    unit: '0–1 index',
+    description: 'Model forecast/projection on the same fixed 0–1 richness scale.',
+    palette: ['#8d1d2c', '#dfb43f', '#126b50'],
+    format: (value) => formatNumber(value, 2),
+  },
   normalizedRichness: {
     key: 'normalizedRichness',
-    label: 'Normalized richness',
-    shortLabel: 'Richness',
+    label: 'Biodiversity richness index',
+    shortLabel: 'Richness index',
     unit: '0–1 index',
     description: 'Observed species richness adjusted by log observation effort, capped at the train p99 and scaled to 0–1.',
     palette: ['#8d1d2c', '#dfb43f', '#126b50'],
@@ -126,6 +135,7 @@ export function parseBiodiversityRows(rows: RawBiodiversityRow[]): BiodiversityR
         nObservations: toNumber(row.n_observations),
         nSpecies: toNumber(row.n_species),
         normalizedRichness: toNumber(row.normalized_richness),
+        predictedRichness: Number.NaN,
       };
 
       return hasUsableRecord(record) ? record : null;
@@ -177,6 +187,10 @@ export function getMetricDomain(
   records: BiodiversityRecord[],
   metric: MetricKey,
 ): { min: number; max: number } {
+  if (metric === 'normalizedRichness' || metric === 'predictedRichness') {
+    return { min: 0, max: 1 };
+  }
+
   const values = records
     .map((record) => getMetricValue(record, metric))
     .filter(Number.isFinite)

@@ -22,7 +22,7 @@ export function MetricLegend({ metric, min, max }: MetricLegendProps) {
         <span>{definition.format(min)}</span>
         <span>{definition.format(max)}</span>
       </div>
-      <p>Marker size follows GBIF observation effort.</p>
+      <p>Marker size follows latest available GBIF observation effort.</p>
     </div>
   );
 }

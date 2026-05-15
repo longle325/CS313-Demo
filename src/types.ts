@@ -1,4 +1,5 @@
 export type MetricKey =
+  | 'predictedRichness'
   | 'normalizedRichness'
   | 'nSpecies'
   | 'nObservations'
@@ -26,6 +27,7 @@ export type BiodiversityRecord = {
   nObservations: number;
   nSpecies: number;
   normalizedRichness: number;
+  predictedRichness: number;
 };
 
 export type MetricDefinition = {

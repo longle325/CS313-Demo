@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Circle, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
-import type { LatLngBoundsExpression } from 'leaflet';
+import { useEffect, useMemo } from 'react';
+import { CircleMarker, MapContainer, TileLayer, Tooltip, useMap } from 'react-leaflet';
+import { type LatLngBoundsExpression } from 'leaflet';
 import type { BiodiversityRecord, MetricKey } from '../types';
 import {
   getMetricDomain,
@@ -10,6 +10,10 @@ import {
 import { formatCoordinate, formatNumber } from '../utils/formatters';
 import { MetricLegend } from './MetricLegend';
 
+const VIETNAM_BOUNDS: LatLngBoundsExpression = [
+  [8.0, 102.0],
+  [23.6, 110.1],
+];
 const VIETNAM_CENTER: [number, number] = [16.1, 106.2];
 
 type VietnamMapProps = {
@@ -26,9 +30,12 @@ export function VietnamMap({
   onSelectRecord,
 }: VietnamMapProps) {
   const domain = useMemo(() => getMetricDomain(records, metric), [records, metric]);
-  const markersKey = useMemo(() => getMarkersKey(records), [records]);
   const selectedRecord = useMemo(
     () => records.find((record) => record.gridId === selectedGridId) ?? null,
+    [records, selectedGridId],
+  );
+  const unselectedRecords = useMemo(
+    () => records.filter((record) => record.gridId !== selectedGridId),
     [records, selectedGridId],
   );
 
@@ -37,7 +44,10 @@ export function VietnamMap({
       <MapContainer
         center={VIETNAM_CENTER}
         className="map-canvas"
+        maxBounds={VIETNAM_BOUNDS}
+        maxBoundsViscosity={0.8}
         minZoom={5}
+        preferCanvas
         scrollWheelZoom
         zoom={5.7}
         zoomSnap={0.25}
@@ -46,175 +56,91 @@ export function VietnamMap({
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <FocusSelectedRecord selectedRecord={selectedRecord} />
-        <MarkersLayer
-          key={markersKey}
-          records={records}
-          metric={metric}
-          metricMin={domain.min}
-          metricMax={domain.max}
-          selectedGridId={selectedGridId}
-          onSelectRecord={onSelectRecord}
-        />
+        <ResetVietnamView />
+        {unselectedRecords.map((record) =>
+          renderGridMarker(record, false, metric, domain.min, domain.max, onSelectRecord),
+        )}
+        {selectedRecord &&
+          renderGridMarker(selectedRecord, true, metric, domain.min, domain.max, onSelectRecord)}
       </MapContainer>
       <MetricLegend metric={metric} min={domain.min} max={domain.max} />
     </section>
   );
 }
 
-type MarkersLayerProps = {
-  records: BiodiversityRecord[];
-  metric: MetricKey;
-  metricMin: number;
-  metricMax: number;
-  selectedGridId: string | null;
-  onSelectRecord: (record: BiodiversityRecord) => void;
-};
-
-function MarkersLayer({
-  records,
-  metric,
-  metricMin,
-  metricMax,
-  selectedGridId,
-  onSelectRecord,
-}: MarkersLayerProps) {
-  const map = useMap();
-  const [zoom, setZoom] = useState(() => map.getZoom());
-  const sortedRecords = useMemo(() => {
-    const ordered = records
-      .slice()
-      .sort((a, b) => a.nObservations - b.nObservations || a.gridId.localeCompare(b.gridId));
-
-    if (!selectedGridId) return ordered;
-    const selectedIndex = ordered.findIndex((record) => record.gridId === selectedGridId);
-    if (selectedIndex === -1) return ordered;
-
-    const [selected] = ordered.splice(selectedIndex, 1);
-    ordered.push(selected);
-    return ordered;
-  }, [records, selectedGridId]);
-
-  useMapEvents({
-    zoomend: (event) => setZoom(event.target.getZoom()),
-  });
-
-  return sortedRecords.map((record) => {
-    const isSelected = record.gridId === selectedGridId;
-    const radius = getMarkerRadiusMeters(record, zoom);
-    const id = `${record.gridId}-${record.year}`;
-    const markerColor = getMarkerColor(record, metric, metricMin, metricMax);
-
-    return (
-      <Circle
-        center={[record.lat, record.lon]}
-        eventHandlers={{
-          click: () => onSelectRecord(record),
-        }}
-        key={id}
-        pathOptions={{
-          color: isSelected ? '#0f172a' : markerColor,
-          fillColor: markerColor,
-          fillOpacity: isSelected ? 0.95 : 0.7,
-          opacity: 0.92,
-          weight: isSelected ? 4 : 1,
-        }}
-        radius={isSelected ? radius * 1.18 : radius}
-      >
-        <Tooltip className="map-tooltip" direction="top" offset={[0, -4]} opacity={0.96}>
-          <strong>{record.gridId}</strong>
-          <span>
-            {formatCoordinate(record.lat)}, {formatCoordinate(record.lon)} · {record.year}
-          </span>
-          <dl>
-            <div>
-              <dt>{METRICS.normalizedRichness.shortLabel}</dt>
-              <dd>{METRICS.normalizedRichness.format(record.normalizedRichness)}</dd>
-            </div>
-            <div>
-              <dt>Species</dt>
-              <dd>{formatNumber(record.nSpecies)}</dd>
-            </div>
-            <div>
-              <dt>Observations</dt>
-              <dd>{formatNumber(record.nObservations)}</dd>
-            </div>
-            <div>
-              <dt>Forest loss</dt>
-              <dd>{METRICS.forestLossHa.format(record.forestLossHa)}</dd>
-            </div>
-            <div>
-              <dt>Rainfall</dt>
-              <dd>{METRICS.totalRainfallMm.format(record.totalRainfallMm)}</dd>
-            </div>
-          </dl>
-        </Tooltip>
-      </Circle>
-    );
-  });
-}
-
-type FocusSelectedRecordProps = {
-  selectedRecord: BiodiversityRecord | null;
-};
-
-function FocusSelectedRecord({ selectedRecord }: FocusSelectedRecordProps) {
+function ResetVietnamView() {
   const map = useMap();
 
   useEffect(() => {
-    if (!selectedRecord) return;
-
-    const nextZoom = Math.max(map.getZoom(), 8.75);
-    map.flyTo([selectedRecord.lat, selectedRecord.lon], nextZoom, {
-      animate: true,
-      duration: 0.8,
-    });
-  }, [map, selectedRecord]);
+    map.setView(VIETNAM_CENTER, 5.7);
+  }, [map]);
 
   return null;
 }
 
-function getMarkerRadiusMeters(record: BiodiversityRecord, zoom: number): number {
-  const metersPerPixel = getMetersPerPixel(record.lat, zoom);
+function getMarkerRadius(record: BiodiversityRecord): number {
   const effort = Math.log1p(record.nObservations);
-  const effortScale = clamp(0.7 + effort * 0.06, 0.6, 1.22);
-  const desiredMeters = 4200 * effortScale;
-  const effortProgress = clamp((effortScale - 0.6) / (1.22 - 0.6), 0, 1);
-
-  const zoomProgress = clamp((zoom - 6) / 3, 0, 1);
-  const minPixelRadius =
-    lerp(2.7, 5.5, zoomProgress) * lerp(0.95, 1.35, effortProgress);
-  const maxPixelRadius =
-    lerp(18, 32, zoomProgress) * lerp(0.9, 1.45, effortProgress);
-  const minMeters = minPixelRadius * metersPerPixel;
-  const maxMeters = maxPixelRadius * metersPerPixel;
-
-  return clamp(desiredMeters, minMeters, maxMeters);
+  return Math.max(4.5, Math.min(18, 3.5 + effort * 1.25));
 }
 
-function getMetersPerPixel(latitude: number, zoom: number): number {
-  const latitudeFactor = Math.cos((latitude * Math.PI) / 180);
-  return (156543.03392 * latitudeFactor) / Math.pow(2, zoom);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function lerp(from: number, to: number, amount: number): number {
-  return from + (to - from) * amount;
-}
-
-function getMarkersKey(records: BiodiversityRecord[]): string {
-  let hash = 2166136261;
-  for (const record of records) {
-    const id = `${record.gridId}-${record.year}-${record.nObservations}`;
-    for (let index = 0; index < id.length; index += 1) {
-      hash ^= id.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-  }
-  return `${records.length}-${hash >>> 0}`;
+function renderGridMarker(
+  record: BiodiversityRecord,
+  isSelected: boolean,
+  metric: MetricKey,
+  min: number,
+  max: number,
+  onSelectRecord: (record: BiodiversityRecord) => void,
+) {
+  const markerColor = getMarkerColor(record, metric, min, max);
+  return (
+    <CircleMarker
+      className={isSelected ? 'selected-grid-marker' : undefined}
+      center={[record.lat, record.lon]}
+      eventHandlers={{
+        click: () => onSelectRecord(record),
+      }}
+      key={`${record.gridId}-${record.year}${isSelected ? '-selected' : ''}`}
+      pathOptions={{
+        color: isSelected ? '#052e22' : markerColor,
+        fillColor: markerColor,
+        fillOpacity: isSelected ? 0.92 : 0.7,
+        opacity: isSelected ? 1 : 0.88,
+        weight: isSelected ? 3 : 1,
+      }}
+      radius={isSelected ? getMarkerRadius(record) + 1.5 : getMarkerRadius(record)}
+    >
+      <Tooltip className="map-tooltip" direction="top" offset={[0, -4]} opacity={0.96}>
+        <strong>{record.gridId}</strong>
+        <span>
+          {formatCoordinate(record.lat)}, {formatCoordinate(record.lon)} · {record.year}
+        </span>
+        <dl>
+          <div>
+            <dt>{METRICS[metric].shortLabel}</dt>
+            <dd>{METRICS[metric].format(record[metric])}</dd>
+          </div>
+          {metric !== 'normalizedRichness' && (
+            <div>
+              <dt>{METRICS.normalizedRichness.shortLabel}</dt>
+              <dd>{METRICS.normalizedRichness.format(record.normalizedRichness)}</dd>
+            </div>
+          )}
+          <div>
+            <dt>Species</dt>
+            <dd>{formatNumber(record.nSpecies)}</dd>
+          </div>
+          <div>
+            <dt>Observations</dt>
+            <dd>{formatNumber(record.nObservations)}</dd>
+          </div>
+          <div>
+            <dt>Forest loss</dt>
+            <dd>{METRICS.forestLossHa.format(record.forestLossHa)}</dd>
+          </div>
+        </dl>
+      </Tooltip>
+    </CircleMarker>
+  );
 }
 
 function getMarkerColor(

@@ -78,12 +78,12 @@ describe('biodiversity dataset utilities', () => {
     expect(summary.topGrid?.gridId).toBe('VN_10.74_106.72');
   });
 
-  it('uses robust percentile domains for skewed map color scales', () => {
+  it('uses one fixed 0-1 map color scale for richness indexes', () => {
     const records = parseBiodiversityRows(rawRows);
 
     expect(getMetricDomain(records, 'normalizedRichness')).toEqual({
-      min: 44.0379,
-      max: 47.7902,
+      min: 0,
+      max: 1,
     });
   });
 });

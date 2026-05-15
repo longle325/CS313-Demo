@@ -1,26 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { loadBiodiversityData } from './data/loadBiodiversityData';
+import { loadPredictions } from './data/loadPredictions';
 import { InsightsPanel } from './components/InsightsPanel';
 import { VietnamMap } from './components/VietnamMap';
+import type { ApiPredictionsResponse } from './data/apiClient';
 import type { BiodiversityRecord, MetricKey } from './types';
 import {
   aggregateRecords,
   filterRecords,
   getAvailableYears,
-  METRICS,
 } from './utils/biodiversityMetrics';
 
-const DEFAULT_METRIC: MetricKey = 'normalizedRichness';
+const FORECAST_YEARS = [2024, 2025];
 
 function App() {
   const [records, setRecords] = useState<BiodiversityRecord[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [selectedYear, setSelectedYear] = useState(2024);
-  const [selectedMetric, setSelectedMetric] = useState<MetricKey>(DEFAULT_METRIC);
   const [minObservations, setMinObservations] = useState(0);
   const [selectedGridId, setSelectedGridId] = useState<string | null>(null);
+  const [apiStatus, setApiStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
 
   useEffect(() => {
     loadBiodiversityData()
@@ -36,8 +37,23 @@ function App() {
       });
   }, []);
 
+  useEffect(() => {
+    if (status !== 'ready') return;
+
+    setApiStatus('loading');
+    Promise.all(FORECAST_YEARS.map((year) => loadPredictions(year)))
+      .then((payloads) => {
+        setRecords((previousRecords) => applyForecastPayloads(previousRecords, payloads));
+        setApiStatus('ready');
+      })
+      .catch(() => {
+        setApiStatus('error');
+      });
+  }, [status]);
+
   const years = useMemo(() => getAvailableYears(records), [records]);
-  const yearLabel = years.length > 0 ? `${years[0]}-${years[years.length - 1]}` : '2009-2024';
+  const mapMetric: MetricKey =
+    selectedYear >= 2024 && apiStatus === 'ready' ? 'predictedRichness' : 'normalizedRichness';
   const filteredRecords = useMemo(
     () => filterRecords(records, { year: selectedYear, minObservations }),
     [records, selectedYear, minObservations],
@@ -50,8 +66,11 @@ function App() {
   );
 
   function resetControls() {
-    if (years.length > 0) setSelectedYear(years[years.length - 1]);
-    setSelectedMetric(DEFAULT_METRIC);
+    if (years.includes(2024)) {
+      setSelectedYear(2024);
+    } else if (years.length > 0) {
+      setSelectedYear(years[years.length - 1]);
+    }
     setMinObservations(0);
     setSelectedGridId(null);
   }
@@ -59,10 +78,6 @@ function App() {
   function handleYearChange(year: number) {
     setSelectedYear(year);
     setSelectedGridId(null);
-  }
-
-  function handleMetricChange(metric: MetricKey) {
-    setSelectedMetric(metric);
   }
 
   function handleMinObservationsChange(value: number) {
@@ -91,18 +106,18 @@ function App() {
           <div className="map-stage">
             <div className="map-titlebar">
               <div>
-                <p className="eyebrow">CS313 · {yearLabel} · {fullSummary.gridCells.toLocaleString('en-US')} grid cells</p>
-                <h2>{METRICS[selectedMetric].label} in Vietnam, {selectedYear}</h2>
+                <p className="eyebrow">CS313 · Vietnam · {fullSummary.gridCells.toLocaleString('en-US')} grid cells</p>
+                <h2>Biodiversity richness index</h2>
               </div>
               <p>
-                Points are Vietnam grid-year records from GBIF and Hansen forest data.
-                <br />
-                Available Open-Meteo weather is shown when present.
+                One fixed 0–1 scale across all years. 2009–2023 are observed history; 2024 is the holdout forecast;
+                2025 is a projection year under persistence assumptions.
+                {apiStatus === 'error' ? ' Model API is unavailable, so the projection year is hidden.' : ''}
               </p>
             </div>
             <VietnamMap
               records={filteredRecords}
-              metric={selectedMetric}
+              metric={mapMetric}
               selectedGridId={selectedGridId}
               onSelectRecord={(record) => setSelectedGridId(record.gridId)}
             />
@@ -110,21 +125,65 @@ function App() {
           <InsightsPanel
             years={years}
             year={selectedYear}
-            metric={selectedMetric}
+            metric={mapMetric}
             minObservations={minObservations}
             summary={filteredSummary}
-            records={filteredRecords}
             selectedRecord={selectedRecord}
             onYearChange={handleYearChange}
-            onMetricChange={handleMetricChange}
             onMinObservationsChange={handleMinObservationsChange}
-            onSelectRecord={(record) => setSelectedGridId(record.gridId)}
             onReset={resetControls}
           />
         </section>
       )}
     </main>
   );
+}
+
+function applyForecastPayloads(
+  currentRecords: BiodiversityRecord[],
+  payloads: ApiPredictionsResponse[],
+): BiodiversityRecord[] {
+  const observedRecords = currentRecords.filter((record) => record.year <= 2024);
+  const recordsByGrid2024 = new Map(
+    observedRecords
+      .filter((record) => record.year === 2024)
+      .map((record) => [record.gridId, record]),
+  );
+  const payloadByYear = new Map(payloads.map((payload) => [payload.year, payload]));
+  const predictionByYearAndGrid = new Map(
+    payloads.map((payload) => [
+      payload.year,
+      new Map(payload.predictions.map((prediction) => [prediction.grid_id, prediction.prediction])),
+    ]),
+  );
+
+  const updatedObservedRecords = observedRecords.map((record) => {
+    if (record.year !== 2024) return record;
+    const prediction = predictionByYearAndGrid.get(2024)?.get(record.gridId);
+    return {
+      ...record,
+      predictedRichness: prediction ?? Number.NaN,
+    };
+  });
+
+  const projectionRecords = [2025].flatMap((year) => {
+    const payload = payloadByYear.get(year);
+    if (!payload) return [];
+    return payload.predictions.flatMap((prediction) => {
+      const template = recordsByGrid2024.get(prediction.grid_id);
+      if (!template) return [];
+      return {
+        ...template,
+        year,
+        normalizedRichness: prediction.prediction,
+        predictedRichness: prediction.prediction,
+        forestLossHa: 0,
+        forestLossPctChange: 0,
+      };
+    });
+  });
+
+  return [...updatedObservedRecords, ...projectionRecords];
 }
 
 export default App;
