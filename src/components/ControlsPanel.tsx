@@ -23,17 +23,30 @@ export function ControlsPanel({
   onMinObservationsChange,
   onReset,
 }: ControlsPanelProps) {
+  const yearIndex = years.indexOf(year);
+  const resolvedYearIndex = yearIndex === -1 ? Math.max(0, years.length - 1) : yearIndex;
+
   return (
     <section className="controls-panel" aria-label="Map controls">
-      <div className="control-row">
-        <label htmlFor="year">Year</label>
-        <select id="year" value={year} onChange={(event) => onYearChange(Number(event.target.value))}>
-          {years.map((availableYear) => (
-            <option value={availableYear} key={availableYear}>
-              {availableYear}
-            </option>
-          ))}
-        </select>
+      <div className="range-control">
+        <div>
+          <label htmlFor="year">Year</label>
+          <span>{year}</span>
+        </div>
+        <input
+          id="year"
+          min="0"
+          max={Math.max(0, years.length - 1)}
+          step="1"
+          type="range"
+          value={resolvedYearIndex}
+          disabled={years.length === 0}
+          onChange={(event) => {
+            const nextIndex = Number(event.target.value);
+            const nextYear = years[nextIndex];
+            if (nextYear !== undefined) onYearChange(nextYear);
+          }}
+        />
       </div>
 
       <div className="control-row">
