@@ -169,7 +169,7 @@ class ModelService:
 
     @classmethod
     def build(cls) -> "ModelService":
-        project_root = Path(__file__).resolve().parents[2]
+        project_root = Path(__file__).resolve().parents[1]
         gbif_path = (
             project_root
             / "notebook_worktree"

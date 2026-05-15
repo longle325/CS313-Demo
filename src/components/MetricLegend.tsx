@@ -9,7 +9,6 @@ type MetricLegendProps = {
 
 export function MetricLegend({ metric, min, max }: MetricLegendProps) {
   const definition = METRICS[metric];
-  const gradient = `linear-gradient(90deg, ${definition.palette.join(', ')})`;
 
   return (
     <div className="map-legend">
@@ -17,12 +16,16 @@ export function MetricLegend({ metric, min, max }: MetricLegendProps) {
         <strong>{definition.shortLabel}</strong>
         <span>{definition.description}</span>
       </div>
-      <div className="legend-ramp" style={{ background: gradient }} aria-hidden="true" />
+      <div className={`legend-ramp legend-ramp--${metric}`} aria-hidden="true" />
       <div className="legend-scale">
         <span>{definition.format(min)}</span>
         <span>{definition.format(max)}</span>
       </div>
-      <p>Marker size follows latest available GBIF observation effort.</p>
+      <p>
+        Marker size follows latest available
+        <br />
+        GBIF observation effort.
+      </p>
     </div>
   );
 }

@@ -202,12 +202,12 @@ h2 {
   left: 18px;
   bottom: 18px;
   z-index: 500;
-  width: min(320px, calc(100% - 36px));
-  padding: 14px;
+  width: min(240px, calc(100% - 36px));
+  padding: 10px;
   border: 1px solid rgba(12, 33, 28, 0.12);
-  border-radius: 18px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 18px 45px rgba(12, 33, 28, 0.18);
+  box-shadow: 0 16px 38px rgba(12, 33, 28, 0.18);
 }
 
 .map-legend strong {
@@ -218,14 +218,55 @@ h2 {
 .map-legend span,
 .map-legend p {
   color: var(--muted);
-  font-size: 0.82rem;
-  line-height: 1.4;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .legend-ramp {
-  height: 12px;
+  height: 10px;
   border-radius: 999px;
-  margin: 14px 0 8px;
+  margin: 10px 0 6px;
+}
+
+.legend-ramp--predictedRichness,
+.legend-ramp--normalizedRichness {
+  background: linear-gradient(90deg, #8d1d2c, #dfb43f, #126b50);
+}
+
+.legend-ramp--nSpecies {
+  background: linear-gradient(90deg, #7f1d1d, #f2a65a, #0f766e);
+}
+
+.legend-ramp--nObservations {
+  background: linear-gradient(90deg, #1f3a5f, #4aa3a2, #d7f171);
+}
+
+.legend-ramp--forestCoverPct {
+  background: linear-gradient(90deg, #5b2c1f, #b7b653, #1d6b43);
+}
+
+.legend-ramp--forestLossHa {
+  background: linear-gradient(90deg, #164e63, #f0b35a, #b42318);
+}
+
+.legend-ramp--avgTemp {
+  background: linear-gradient(90deg, #22577a, #f6d365, #c2410c);
+}
+
+.legend-ramp--totalRainfallMm {
+  background: linear-gradient(90deg, #6d3f12, #5fb7b7, #174ea6);
+}
+
+.legend-ramp--nDryDays {
+  background: linear-gradient(90deg, #1e6091, #fed766, #9a3412);
+}
+
+.legend-ramp--nHotDays {
+  background: linear-gradient(90deg, #155e75, #facc15, #dc2626);
+}
+
+.legend-ramp--tempAnomaly {
+  background: linear-gradient(90deg, #2563eb, #f8fafc, #dc2626);
 }
 
 .legend-scale {
@@ -235,7 +276,7 @@ h2 {
 }
 
 .map-legend p {
-  margin: 10px 0 0;
+  margin: 6px 0 0;
 }
 
 .insights-panel {
