@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Crosshair, RotateCcw, Sprout } from 'lucide-react';
+import { Crosshair, RotateCcw } from 'lucide-react';
 import { api, type ApiGridResponse, type ApiModelOption, type ApiScenarioResponse } from '../data/apiClient';
 import type { BiodiversityRecord, DatasetSummary, MetricKey } from '../types';
 import { METRICS } from '../utils/biodiversityMetrics';
+import { hasCompleteFeatureAudit } from '../utils/featureAudit';
 import { formatCoordinate, formatNumber } from '../utils/formatters';
+
+const PROJECTION_YEAR = 2025;
+const PROJECTION_BASELINE_LOSS_HA = 0;
 
 type InsightsPanelProps = {
   years: number[];
@@ -39,22 +43,17 @@ export function InsightsPanel({
   const [scenarioStatus, setScenarioStatus] = useState<'idle' | 'running' | 'ready' | 'error'>('idle');
   const metricDefinition = METRICS[metric];
   const activeRecord = selectedRecord;
-  const selectedModel = modelOptions.find((modelOption) => modelOption.model_id === selectedModelId) ?? null;
+  const baselineCover = toNullableNumber(activeRecord?.forestCoverPct);
+  const baselineLoss = activeRecord ? PROJECTION_BASELINE_LOSS_HA : null;
   const canRunInference =
-    year >= 2024 && activeRecord !== null && selectedModelId !== '' && modelOptionsStatus === 'ready';
-  const baselineCover = gridDetails?.features.find((feature) => feature.key === 'forest_cover_pct')?.value ?? null;
-  const baselineLoss = gridDetails?.features.find((feature) => feature.key === 'forest_loss_ha')?.value ?? null;
-  const modelFeatureDetails = gridDetails?.features.filter((feature) => feature.value !== null) ?? [];
-  const maxContribution =
-    gridDetails?.explanation.reduce(
-      (currentMax, row) => Math.max(currentMax, Math.abs(row.contribution)),
-      0,
-    ) ?? 0;
-  const totalContributionImpact =
-    gridDetails?.explanation.reduce(
-      (total, row) => total + Math.abs(row.contribution),
-      0,
-    ) ?? 0;
+    year === 2024 &&
+    activeRecord !== null &&
+    selectedModelId !== '' &&
+    modelOptionsStatus === 'ready' &&
+    scenarioCover !== null &&
+    scenarioLoss !== null;
+  const featureAuditRows = scenarioResult?.scenario_explanation ?? gridDetails?.explanation ?? [];
+  const isFeatureAuditComplete = hasCompleteFeatureAudit(featureAuditRows);
 
   useEffect(() => {
     let isCurrent = true;
@@ -86,21 +85,18 @@ export function InsightsPanel({
   useEffect(() => {
     setGridDetails(null);
     setGridDetailsStatus('idle');
-    setScenarioCover(null);
-    setScenarioLoss(null);
+    setScenarioCover(toNullableNumber(activeRecord?.forestCoverPct));
+    setScenarioLoss(activeRecord ? PROJECTION_BASELINE_LOSS_HA : null);
     setScenarioResult(null);
     setScenarioStatus('idle');
-  }, [activeRecord?.gridId, selectedModelId, year]);
+  }, [activeRecord?.gridId, year]);
 
   useEffect(() => {
-    if (!gridDetails || year < 2024) return;
-    const cover = gridDetails.features.find((feature) => feature.key === 'forest_cover_pct')?.value;
-    const loss = gridDetails.features.find((feature) => feature.key === 'forest_loss_ha')?.value;
-    setScenarioCover(cover ?? null);
-    setScenarioLoss(loss ?? null);
+    setGridDetails(null);
+    setGridDetailsStatus('idle');
     setScenarioResult(null);
     setScenarioStatus('idle');
-  }, [gridDetails?.grid_id, year]);
+  }, [selectedModelId]);
 
   const selectedDetails = activeRecord
     ? [
@@ -121,52 +117,35 @@ export function InsightsPanel({
       ].filter((item): item is { label: string; value: string } => item !== null)
     : [];
 
-  function runScenario() {
-    if (!gridDetails || scenarioCover === null || scenarioLoss === null) return;
-
-    setScenarioStatus('running');
-    api
-      .scenario({
-        grid_id: gridDetails.grid_id,
-        year: gridDetails.year as 2024 | 2025,
-        model_id: gridDetails.model_id,
-        forest_cover_pct: scenarioCover,
-        forest_loss_ha: scenarioLoss,
-      })
-      .then((result) => {
-        setScenarioResult(result);
-        setScenarioStatus('ready');
-      })
-      .catch(() => {
-        setScenarioStatus('error');
-      });
-  }
-
   function runInference() {
-    if (!activeRecord || !selectedModelId) return;
+    if (!activeRecord || !selectedModelId || scenarioCover === null || scenarioLoss === null) return;
 
     setGridDetails(null);
     setGridDetailsStatus('loading');
     setScenarioResult(null);
-    setScenarioStatus('idle');
-    api
-      .grid(activeRecord.gridId, year, selectedModelId)
-      .then((data) => {
-        setGridDetails(data);
+    setScenarioStatus('running');
+    Promise.all([
+      api.grid(activeRecord.gridId, PROJECTION_YEAR, selectedModelId),
+      api.scenario({
+        grid_id: activeRecord.gridId,
+        year: PROJECTION_YEAR,
+        model_id: selectedModelId,
+        forest_cover_pct: scenarioCover,
+        forest_loss_ha: scenarioLoss,
+      }),
+    ])
+      .then(([gridData, scenarioData]) => {
+        setGridDetails(gridData);
+        setScenarioResult(scenarioData);
         setGridDetailsStatus('ready');
+        setScenarioStatus('ready');
       })
       .catch(() => {
         setGridDetails(null);
+        setScenarioResult(null);
         setGridDetailsStatus('error');
+        setScenarioStatus('error');
       });
-  }
-
-  function applyStressScenario() {
-    if (baselineCover === null || baselineLoss === null) return;
-    setScenarioCover(Math.max(0, Number((baselineCover - 30).toFixed(1))));
-    setScenarioLoss(Number((baselineLoss + 200).toFixed(1)));
-    setScenarioResult(null);
-    setScenarioStatus('idle');
   }
 
   function resetScenario() {
@@ -179,10 +158,6 @@ export function InsightsPanel({
   return (
     <aside className="insights-panel" aria-label="Map filters and selected grid cells">
       <div className="panel-header">
-        <div>
-          <p className="eyebrow">Vietnam grid map</p>
-          <h1>Biodiversity demo</h1>
-        </div>
         <button className="icon-button" type="button" onClick={onReset} aria-label="Reset filters">
           <RotateCcw size={17} aria-hidden="true" />
         </button>
@@ -191,7 +166,11 @@ export function InsightsPanel({
       <section className="compact-controls" aria-label="Filters">
         <div className="control-row">
           <label htmlFor="year">Year</label>
-          <select id="year" value={year} onChange={(event) => onYearChange(Number(event.target.value))}>
+          <select
+            id="year"
+            value={year}
+            onChange={(event) => onYearChange(Number(event.target.value))}
+          >
             {years.map((availableYear) => (
               <option value={availableYear} key={availableYear}>
                 {availableYear}
@@ -199,7 +178,6 @@ export function InsightsPanel({
             ))}
           </select>
         </div>
-
         <div className="range-control">
           <div>
             <label htmlFor="observations">Min observed records</label>
@@ -252,35 +230,27 @@ export function InsightsPanel({
                   </div>
                 ))}
               </dl>
-              {year >= 2024 && modelFeatureDetails.length > 0 && (
-                <div className="model-feature-strip" aria-label="Model feature snapshot">
-                  <p>Model feature snapshot</p>
-                  {modelFeatureDetails.map((feature) => (
-                    <span key={feature.key}>
-                      <strong>{feature.label}</strong>
-                      {formatFeatureValue(feature.value, feature.unit)}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {year > 2024 && (
-                <p className="projection-note">
-                  Projection year: future rows keep the latest known 2024 grid context unless the scenario controls
-                  below modify forest cover or loss.
+              {year !== 2024 && (
+                <p className="projection-hint">
+                  Switch to 2024 to run a {PROJECTION_YEAR} projection for this grid.
                 </p>
               )}
             </>
           ) : (
-            <p>Click a marker on the map to start single-grid inference.</p>
+            <p>
+              {year === 2024
+                ? 'Click a marker on the map to start single-grid inference.'
+                : 'Click a marker on the map to inspect observed history for this year.'}
+            </p>
           )}
         </section>
 
-        {year >= 2024 && activeRecord && (
+        {year === 2024 && activeRecord && (
           <section className="inference-card" aria-label="Model inference setup">
             <div className="inference-title">
               <div>
                 <Crosshair size={17} aria-hidden="true" />
-                <h2>Model inference</h2>
+                <h2>Prediction</h2>
               </div>
             </div>
             <label className="model-picker" htmlFor="model-picker">
@@ -294,76 +264,78 @@ export function InsightsPanel({
                 {modelOptions.map((modelOption) => (
                   <option value={modelOption.model_id} key={modelOption.model_id}>
                     {modelOption.label}
-                    {modelOption.test_r2 === null ? '' : ` · R² ${modelOption.test_r2.toFixed(3)}`}
                   </option>
                 ))}
               </select>
             </label>
-            {selectedModel && (
-              <div className="model-metrics" aria-label="Selected model leaderboard metrics">
-                <span>{selectedModel.family}</span>
-                <span>Valid R² {formatOptionalMetric(selectedModel.valid_r2)}</span>
-                <span>Test R² {formatOptionalMetric(selectedModel.test_r2)}</span>
-                <span>MAE {formatOptionalMetric(selectedModel.mae)}</span>
-              </div>
-            )}
             {modelOptionsStatus === 'error' && <p className="helper">Model metadata API is unavailable.</p>}
+            <div className="editable-inputs" aria-label="Editable prediction inputs">
+              <div className="editable-inputs-title">
+                <span>Input</span>
+                <em>{PROJECTION_YEAR}</em>
+              </div>
+              <div className="scenario-grid">
+                <label>
+                  <span>Forest cover (%)</span>
+                  <input
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    type="number"
+                    value={scenarioCover ?? ''}
+                    onChange={(event) => {
+                      setScenarioCover(event.target.value === '' ? null : Number(event.target.value));
+                      setScenarioResult(null);
+                      setScenarioStatus('idle');
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>Forest loss (ha)</span>
+                  <input
+                    min="0"
+                    step="0.1"
+                    type="number"
+                    value={scenarioLoss ?? ''}
+                    onChange={(event) => {
+                      setScenarioLoss(event.target.value === '' ? null : Number(event.target.value));
+                      setScenarioResult(null);
+                      setScenarioStatus('idle');
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="scenario-presets">
+                <button type="button" onClick={resetScenario}>
+                  Reset inputs
+                </button>
+              </div>
+            </div>
             <button
               className="primary-button inference-button"
-              disabled={!canRunInference || gridDetailsStatus === 'loading'}
+              disabled={!canRunInference || gridDetailsStatus === 'loading' || scenarioStatus === 'running'}
               type="button"
               onClick={runInference}
             >
-              {gridDetailsStatus === 'loading' ? 'Running inference...' : `Run inference for ${year}`}
+              {gridDetailsStatus === 'loading' || scenarioStatus === 'running'
+                ? 'Running prediction...'
+                : 'Run prediction'}
             </button>
-            {gridDetailsStatus === 'error' && <p className="helper scenario-error">Inference failed.</p>}
+            {(gridDetailsStatus === 'error' || scenarioStatus === 'error') && (
+              <p className="helper scenario-error">Prediction failed.</p>
+            )}
           </section>
         )}
 
-        {year >= 2024 && activeRecord && gridDetailsStatus !== 'idle' && (
+        {year === 2024 && activeRecord && gridDetailsStatus !== 'idle' && (
           <section className="prediction-card" aria-label="Prediction result">
-            <h2>Prediction result</h2>
+            <h2>{PROJECTION_YEAR} prediction result</h2>
             {gridDetailsStatus === 'ready' && gridDetails ? (
               <>
                 <p className="card-kicker">{gridDetails.model_label}</p>
                 <div className="prediction-main">
-                  <span>{gridDetails.predicted.toFixed(2)} / 1.00</span>
-                  <em className={`level-pill level-${gridDetails.level.toLowerCase()}`}>
-                    {gridDetails.level}
-                  </em>
+                  <span>{(scenarioResult?.scenario_predicted ?? gridDetails.predicted).toFixed(2)} / 1.00</span>
                 </div>
-                <p className="helper">
-                  Relative biodiversity index for {gridDetails.year}. Low/Medium/High uses predicted-score
-                  percentiles, not absolute biological thresholds.
-                </p>
-                <div className="threshold-note">
-                  <span>p33 {gridDetails.thresholds.p33.toFixed(2)}</span>
-                  <span>p66 {gridDetails.thresholds.p66.toFixed(2)}</span>
-                  <span>data-driven labels</span>
-                </div>
-                <dl className="mini-metrics">
-                  <div>
-                    <dt>{gridDetails.year === 2024 ? 'Observed 2024' : 'Observed target'}</dt>
-                    <dd>
-                      {gridDetails.observed === null
-                        ? gridDetails.year > 2024
-                          ? '— projection'
-                          : '—'
-                        : formatNumber(gridDetails.observed, 2)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Residual</dt>
-                    <dd>
-                      {gridDetails.observed === null
-                        ? '—'
-                        : `${gridDetails.observed - gridDetails.predicted > 0 ? '+' : ''}${formatNumber(
-                            gridDetails.observed - gridDetails.predicted,
-                            2,
-                          )}`}
-                    </dd>
-                  </div>
-                </dl>
               </>
             ) : (
               <p className="helper">
@@ -373,129 +345,48 @@ export function InsightsPanel({
           </section>
         )}
 
-        {year >= 2024 && activeRecord && gridDetailsStatus !== 'idle' && (
-          <section className="explanation-card" aria-label="Feature contributions">
-            <h2>Top model factors</h2>
-            {gridDetailsStatus === 'ready' && gridDetails ? (
-              <>
-                <p className="helper">
-                  Bars show model-agnostic local sensitivity: how the prediction changes if one feature is replaced by
-                  its training median. Percent values are relative impact shares among the factors shown, not score
-                  increases.
-                </p>
-                <ol className="explanation-list">
-                  {gridDetails.explanation.map((row) => (
-                    <li className={`impact impact-${row.direction}`} key={row.feature_key}>
-                      <div>
-                        <span>{row.feature_label}</span>
-                        <em>
-                          {impactLabel(row.direction)} · {impactShare(row.contribution, totalContributionImpact)}%
-                          impact share
-                        </em>
-                      </div>
-                      <span className="impact-track" aria-hidden="true">
-                        <span
-                          style={{
-                            width: `${impactWidth(row.contribution, maxContribution)}%`,
-                          }}
-                        />
+        {year === 2024 && activeRecord && gridDetailsStatus !== 'idle' && (
+          <section className="explanation-card" aria-label="Feature audit">
+            {gridDetailsStatus === 'ready' && gridDetails && isFeatureAuditComplete ? (
+              <details className="feature-audit" open>
+                <summary>
+                  <span>Feature audit</span>
+                </summary>
+                <p className="audit-note">Δ score compares the current value against the training median.</p>
+                <div className="feature-audit-table" role="table" aria-label="All model feature effects">
+                  <div className="feature-audit-row feature-audit-head" role="row">
+                    <span role="columnheader">Feature</span>
+                    <span role="columnheader">Value</span>
+                    <span role="columnheader">Median</span>
+                    <span role="columnheader">Δ score</span>
+                  </div>
+                  {featureAuditRows.map((row) => (
+                    <div className="feature-audit-row" role="row" key={row.feature_key}>
+                      <span className="audit-feature" role="cell">
+                        {row.feature_label}
+                        <small>{row.feature_key}</small>
                       </span>
-                    </li>
+                      <span role="cell">{formatAuditValue(row.value, row.feature_key)}</span>
+                      <span role="cell">{formatAuditValue(row.reference_value, row.feature_key)}</span>
+                      <span className={`audit-delta audit-delta-${row.direction}`} role="cell">
+                        {formatScoreDelta(row.contribution)}
+                      </span>
+                    </div>
                   ))}
-                </ol>
-              </>
+                </div>
+              </details>
             ) : (
               <p className="helper">
-                {gridDetailsStatus === 'error' ? 'Explanation is unavailable.' : 'Running explanation...'}
+                {gridDetailsStatus === 'error'
+                  ? 'Explanation is unavailable.'
+                  : gridDetailsStatus === 'ready'
+                    ? 'Feature audit needs the latest backend response. Restart FastAPI and run prediction again.'
+                    : 'Running explanation...'}
               </p>
             )}
           </section>
         )}
 
-        {year >= 2024 && activeRecord && gridDetailsStatus === 'ready' && gridDetails && (
-          <section className="scenario-card" aria-label="Scenario simulation">
-            <div className="scenario-title">
-              <div>
-                <Sprout size={17} aria-hidden="true" />
-                <h2>Scenario simulation</h2>
-              </div>
-              <span>forest-only</span>
-            </div>
-            <p className="helper">
-              Change forest cover/loss while all other model features stay fixed for the selected grid.
-            </p>
-            <div className="scenario-presets">
-              <button type="button" onClick={applyStressScenario}>
-                Apply degradation scenario
-              </button>
-              <button type="button" onClick={resetScenario}>
-                Reset selected grid
-              </button>
-            </div>
-            <div className="scenario-grid">
-              <label>
-                <span>Forest cover (%)</span>
-                <input
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  type="number"
-                  value={scenarioCover ?? ''}
-                  onChange={(event) =>
-                    setScenarioCover(event.target.value === '' ? null : Number(event.target.value))
-                  }
-                />
-              </label>
-              <label>
-                <span>Forest loss (ha)</span>
-                <input
-                  min="0"
-                  step="0.1"
-                  type="number"
-                  value={scenarioLoss ?? ''}
-                  onChange={(event) =>
-                    setScenarioLoss(event.target.value === '' ? null : Number(event.target.value))
-                  }
-                />
-              </label>
-            </div>
-            <button
-              className="primary-button"
-              disabled={scenarioCover === null || scenarioLoss === null || scenarioStatus === 'running'}
-              type="button"
-              onClick={runScenario}
-            >
-              {scenarioStatus === 'running' ? 'Running...' : 'Run scenario prediction'}
-            </button>
-            {scenarioStatus === 'error' && <p className="helper scenario-error">Scenario failed.</p>}
-            {scenarioResult && (
-              <div className="scenario-result">
-                <div>
-                  <span>Original</span>
-                  <strong>{scenarioResult.baseline_predicted.toFixed(2)}</strong>
-                </div>
-                <div>
-                  <span>Scenario</span>
-                  <strong>{scenarioResult.scenario_predicted.toFixed(2)}</strong>
-                </div>
-                <div>
-                  <span>Change</span>
-                  <strong className={scenarioResult.delta < 0 ? 'delta-negative' : 'delta-positive'}>
-                    {scenarioResult.delta >= 0 ? '+' : ''}
-                    {scenarioResult.delta.toFixed(2)}
-                  </strong>
-                </div>
-              </div>
-            )}
-            {scenarioResult && (
-              <p className="scenario-interpretation">
-                {scenarioResult.delta < 0
-                  ? 'Interpretation: lower forest cover and higher loss reduce the predicted richness index.'
-                  : 'Interpretation: this scenario does not reduce the predicted richness index for this grid.'}
-              </p>
-            )}
-          </section>
-        )}
       </div>
     </aside>
   );
@@ -510,30 +401,29 @@ function detailIfFinite(
   return { label, value: formatter(value) };
 }
 
-function formatFeatureValue(value: number | null, unit?: string | null): string {
+function toNullableNumber(value: number | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function formatAuditValue(value: number | null, featureKey: string): string {
   if (value === null || !Number.isFinite(value)) return '—';
-  if (unit === '%') return `${formatNumber(value, 1)}%`;
-  if (unit === 'ha') return `${formatNumber(value, 1)} ha`;
-  if (unit === 'years') return `${formatNumber(value, 0)} years`;
+  if (featureKey === 'lat' || featureKey === 'lon') return `${value.toFixed(2)}°`;
+  if (featureKey.includes('pct')) return `${formatNumber(value, 2)}%`;
+  if (featureKey.includes('forest_loss_ha')) return `${formatNumber(value, 2)} ha`;
+  if (featureKey.includes('years_since')) return `${formatNumber(value, 0)} yr`;
+  if (
+    featureKey.includes('n_observations') ||
+    featureKey.includes('n_species') ||
+    featureKey === 'prior_records_for_cell'
+  ) {
+    return formatNumber(value, 0);
+  }
+  if (featureKey.startsWith('normalized_richness_01')) return value.toFixed(3);
   return formatNumber(value, 2);
 }
 
-function impactWidth(contribution: number, maxContribution: number): number {
-  if (!Number.isFinite(maxContribution) || maxContribution <= 0) return 8;
-  return Math.max(8, (Math.abs(contribution) / maxContribution) * 100);
-}
-
-function impactShare(contribution: number, totalContributionImpact: number): string {
-  if (!Number.isFinite(totalContributionImpact) || totalContributionImpact <= 0) return '0';
-  return formatNumber((Math.abs(contribution) / totalContributionImpact) * 100, 0);
-}
-
-function impactLabel(direction: 'positive' | 'negative' | 'neutral'): string {
-  if (direction === 'positive') return 'Positive';
-  if (direction === 'negative') return 'Negative';
-  return 'Neutral';
-}
-
-function formatOptionalMetric(value: number | null): string {
-  return value === null ? '—' : formatNumber(value, 3);
+function formatScoreDelta(contribution: number): string {
+  if (!Number.isFinite(contribution)) return '0.000';
+  const sign = contribution > 0 ? '+' : contribution < 0 ? '-' : '';
+  return `${sign}${Math.abs(contribution).toFixed(3)}`;
 }

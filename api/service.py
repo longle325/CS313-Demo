@@ -49,7 +49,6 @@ FEATURE_SUMMARY = (
 FEATURE_LABELS = {
     "lat": "Latitude",
     "lon": "Longitude",
-    "year": "Year",
     "forest_cover_pct": "Forest cover",
     "forest_loss_ha": "Forest loss",
     "forest_loss_pct_change": "Forest loss (% change)",
@@ -74,7 +73,7 @@ DEFAULT_MODEL_ID = "xgboost_logistic"
 MODEL_OPTIONS = (
     ModelOption(
         model_id="xgboost_logistic",
-        label="XGBoost logistic (validation-selected final)",
+        label="XGBoost logistic",
         description=(
             "Selected by 2023 validation R², then retrained on 2009–2023 "
             "for the locked 2024 forecast."
@@ -89,7 +88,7 @@ MODEL_OPTIONS = (
     ModelOption(
         model_id="hist_gradient_boosting",
         label="HistGradientBoosting",
-        description="Strong sklearn boosted-tree model on the same final 33-feature set.",
+        description="Strong sklearn boosted-tree model on the same final feature set.",
         family="Boosted trees",
         valid_r2=0.5838988073784994,
         test_r2=0.6862899088411016,
@@ -99,7 +98,7 @@ MODEL_OPTIONS = (
     ModelOption(
         model_id="extra_trees",
         label="ExtraTrees",
-        description="Randomized tree ensemble benchmark on the same final 33-feature set.",
+        description="Randomized tree ensemble benchmark on the same final feature set.",
         family="Bagging trees",
         valid_r2=0.5798543504679957,
         test_r2=0.6834781243043673,
@@ -194,7 +193,8 @@ class ModelService:
             how="left",
             validate="one_to_one",
         ).sort_values(["grid_id", "year"])
-        feature_frame = _build_feature_frame(base_frame)
+        forecast_base_frame = _append_projection_rows(base_frame, FORECAST_YEARS)
+        feature_frame = _build_feature_frame(forecast_base_frame)
 
         feature_cols = tuple(select_forecast_features(feature_frame))
         train_frame = feature_frame.loc[feature_frame["year"].lt(MODEL_YEAR)].dropna(subset=[TARGET])
@@ -219,7 +219,7 @@ class ModelService:
         thresholds_by_model_year: dict[str, dict[int, Thresholds]] = {}
 
         for model_id, model in models.items():
-            working_frame = base_frame.copy()
+            working_frame = forecast_base_frame.copy()
             frame_by_model_year[model_id] = {}
             x_by_model_year[model_id] = {}
             predictions_by_model_year[model_id] = {}
@@ -253,15 +253,6 @@ class ModelService:
                         forecast_mask,
                         "grid_id",
                     ].map(predictions)
-
-                if forecast_year != FORECAST_YEARS[-1]:
-                    working_frame = pd.concat(
-                        [
-                            working_frame,
-                            _build_projection_rows(working_frame, forecast_year + 1),
-                        ],
-                        ignore_index=True,
-                    )
 
         return cls(
             models=models,
@@ -365,6 +356,16 @@ class ModelService:
             scenario_predicted=scenario_predicted,
             delta=scenario_predicted - baseline_predicted,
             thresholds=self.thresholds_by_model_year[resolved_model_id][resolved_year],
+            baseline_features=_forest_scenario_features(
+                forest_cover_pct=_finite_or_nan(frame_row.get("forest_cover_pct")),
+                forest_loss_ha=_finite_or_nan(frame_row.get("forest_loss_ha")),
+                forest_loss_pct_change=_finite_or_nan(frame_row.get("forest_loss_pct_change")),
+            ),
+            scenario_features=_forest_scenario_features(
+                forest_cover_pct=payload.forest_cover_pct,
+                forest_loss_ha=payload.forest_loss_ha,
+                forest_loss_pct_change=forest_loss_pct_change,
+            ),
             baseline_explanation=self._explain(baseline_x, resolved_model_id),
             scenario_explanation=self._explain(scenario_x, resolved_model_id),
         )
@@ -410,24 +411,24 @@ class ModelService:
 
     def _explain(self, x_row: pd.DataFrame, model_id: str) -> list[ExplanationRow]:
         baseline_prediction = self._predict_one(x_row, model_id)
-        feature_contributions = []
+        feature_values = x_row.iloc[0]
+        explanation_rows: list[ExplanationRow] = []
         for feature_key in self.feature_cols:
             perturbed = x_row.copy()
-            perturbed.loc[:, feature_key] = float(self.medians.get(feature_key, 0.0))
-            feature_contributions.append(
-                baseline_prediction - self._predict_one(perturbed, model_id)
+            reference_value = float(self.medians.get(feature_key, 0.0))
+            perturbed.loc[:, feature_key] = reference_value
+            contribution = baseline_prediction - self._predict_one(perturbed, model_id)
+            explanation_rows.append(
+                ExplanationRow(
+                    feature_key=feature_key,
+                    feature_label=_humanize_feature(feature_key),
+                    value=_optional_float(feature_values.get(feature_key)),
+                    reference_value=_optional_float(reference_value),
+                    contribution=float(contribution),
+                    direction=_direction(float(contribution)),
+                )
             )
-        feature_contributions_array = np.array(feature_contributions)
-        ranked_indices = np.argsort(np.abs(feature_contributions_array))[::-1][:8]
-        return [
-            ExplanationRow(
-                feature_key=self.feature_cols[index],
-                feature_label=_humanize_feature(self.feature_cols[index]),
-                contribution=float(feature_contributions_array[index]),
-                direction=_direction(float(feature_contributions_array[index])),
-            )
-            for index in ranked_indices
-        ]
+        return sorted(explanation_rows, key=lambda row: abs(row.contribution), reverse=True)
 
     def _predict_one(self, x_row: pd.DataFrame, model_id: str) -> float:
         prediction = self.models[model_id].predict(x_row.loc[:, self.feature_cols])
@@ -523,24 +524,40 @@ def _build_feature_frame(base_frame: pd.DataFrame) -> pd.DataFrame:
     return add_history_features(out, HISTORY_COLUMNS)
 
 
-def _build_projection_rows(
-    working_frame: pd.DataFrame,
-    projection_year: int,
-) -> pd.DataFrame:
-    previous_year = projection_year - 1
-    previous_rows = working_frame.loc[working_frame["year"].eq(previous_year)].copy()
-    if previous_rows.empty:
-        raise ValueError(f"No previous rows available for projection year {projection_year}")
+def _append_projection_rows(base_frame: pd.DataFrame, forecast_years: tuple[int, ...]) -> pd.DataFrame:
+    out = base_frame.sort_values(["grid_id", "year"]).copy()
+    current_like_columns = [
+        "n_observations",
+        "n_species",
+        "n_weighted_individuals",
+        *TARGETS_AND_DERIVED,
+    ]
 
-    projection_rows = previous_rows.copy()
-    projection_rows["year"] = projection_year
-    projection_rows[TARGET] = np.nan
-    projection_rows["forest_loss_ha"] = 0.0
-    projection_rows["forest_loss_pct_change"] = 0.0
-    for column in TARGETS_AND_DERIVED - {TARGET}:
-        if column in projection_rows.columns:
-            projection_rows[column] = np.nan
-    return projection_rows
+    for forecast_year in sorted(year for year in forecast_years if year > MODEL_YEAR):
+        if out["year"].eq(forecast_year).any():
+            continue
+
+        source_year = forecast_year - 1
+        source_rows = out.loc[out["year"].eq(source_year)].copy()
+        if source_rows.empty:
+            raise ValueError(f"Cannot build projection rows for {forecast_year}: missing {source_year}")
+
+        projection_rows = source_rows.copy()
+        projection_rows.loc[:, "year"] = forecast_year
+
+        for column in current_like_columns:
+            if column in projection_rows.columns:
+                projection_rows[column] = projection_rows[column].astype("float64")
+                projection_rows[column] = np.nan
+
+        if "forest_loss_ha" in projection_rows.columns:
+            projection_rows.loc[:, "forest_loss_ha"] = 0.0
+        if "forest_loss_pct_change" in projection_rows.columns:
+            projection_rows.loc[:, "forest_loss_pct_change"] = 0.0
+
+        out = pd.concat([out, projection_rows], ignore_index=True)
+
+    return out.sort_values(["grid_id", "year"])
 
 
 def _humanize_feature(feature_key: str) -> str:
@@ -572,6 +589,33 @@ def _optional_float(value: object) -> float | None:
     if not np.isfinite(numeric_value):
         return None
     return numeric_value
+
+
+def _forest_scenario_features(
+    forest_cover_pct: float,
+    forest_loss_ha: float,
+    forest_loss_pct_change: float,
+) -> list[FeatureValue]:
+    return [
+        FeatureValue(
+            key="forest_cover_pct",
+            label="Forest cover",
+            value=_optional_float(forest_cover_pct),
+            unit="%",
+        ),
+        FeatureValue(
+            key="forest_loss_ha",
+            label="Forest loss",
+            value=_optional_float(forest_loss_ha),
+            unit="ha",
+        ),
+        FeatureValue(
+            key="forest_loss_pct_change",
+            label="Forest loss (% change)",
+            value=_optional_float(forest_loss_pct_change),
+            unit="%",
+        ),
+    ]
 
 
 def _finite_or_nan(value: object) -> float:

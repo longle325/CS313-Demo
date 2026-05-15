@@ -48,6 +48,8 @@ export type ApiFeatureValue = {
 export type ApiExplanationRow = {
   feature_key: string;
   feature_label: string;
+  value: number | null;
+  reference_value: number | null;
   contribution: number;
   direction: 'positive' | 'negative' | 'neutral';
 };
@@ -82,6 +84,8 @@ export type ApiScenarioResponse = {
   scenario_predicted: number;
   delta: number;
   thresholds: ApiThresholds;
+  baseline_features: ApiFeatureValue[];
+  scenario_features: ApiFeatureValue[];
   baseline_explanation: ApiExplanationRow[];
   scenario_explanation: ApiExplanationRow[];
 };

@@ -2,7 +2,7 @@
 
 Interactive CS313.Q23 Data Mining and Applications project for grid-level biodiversity richness forecasting in Vietnam. The repository contains the React + Leaflet web demo, FastAPI inference backend, final reproducible notebook, processed 2009-2024 datasets, and scripts used to crawl/prepare GBIF, Hansen forest, and Open-Meteo data.
 
-The demo visualizes a fixed-scale 0-1 biodiversity richness index, selected-grid model inference, model leaderboard comparison, 2025 projection under persistence assumptions, model explanations, and forest scenario simulation across Vietnam grid-year records.
+The demo visualizes a fixed-scale 0-1 biodiversity richness index, selected-grid model inference, model leaderboard comparison, a 2025 projection workflow, feature audit explanations, and forest scenario simulation across Vietnam grid-year records.
 
 ## Project Summary
 
@@ -36,6 +36,8 @@ Interpretation:
 - `0` means relatively low observed richness after correcting for observation effort.
 - `1` means very high observed richness relative to the capped maximum in the training data.
 - It should be interpreted as a relative biodiversity condition indicator, not a literal number of species.
+
+The frontend uses one map layer only: `Vietnam Biodiversity richness index`. Color is always scaled from `0.00` to `1.00`. The map can browse observed years `2009-2024`; selecting a 2024 grid opens a 2025 projection setup using latest grid history plus editable 2025 forest inputs.
 
 ## Repository Structure
 
@@ -132,7 +134,8 @@ Health check:
 curl http://127.0.0.1:8000/api/health
 ```
 
-Expected response includes `"status":"ok"` and `"model_year":2024`.
+Expected response includes `"status":"ok"`, `"model_year":2024`, and
+`"forecast_years":[2024,2025]`.
 
 Useful backend endpoints:
 
@@ -154,7 +157,10 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 Open `http://127.0.0.1:5173/`.
 
-Keep the backend running on `http://127.0.0.1:8000`; otherwise the map falls back to observed metrics and prediction/explanation/scenario panels cannot load.
+Keep the backend running on `http://127.0.0.1:8000`; otherwise model selection,
+2025 prediction, feature audit, and scenario panels cannot load. The audit
+reports every model feature with its active value, training median, and local
+score sensitivity.
 
 For the presentation flow, use `DEMO_SCRIPT.md`.
 

@@ -22,6 +22,7 @@ TARGETS_AND_DERIVED = {
 }
 DROP_FORECAST = {
     "grid_id",
+    "year",
     "n_weighted_individuals",
     "n_species",
     "n_observations",
@@ -96,7 +97,7 @@ def scenario_loss_pct_change(
     scenario_loss_ha: float,
     cell_area_by_grid: Mapping[str, float] | pd.Series,
 ) -> float:
-    cell_area = _lookup_cell_area(grid_id, cell_area_by_grid)
+    cell_area = _lookup_cell_area(grid_id, cell_area_by_grid) or _median_cell_area(cell_area_by_grid)
     if cell_area is not None:
         return -100 * scenario_loss_ha / cell_area
     if baseline_loss_ha and np.isfinite(baseline_loss_ha):
@@ -125,3 +126,25 @@ def _lookup_cell_area(
     if np.isfinite(cell_area) and cell_area > 0:
         return cell_area
     return None
+
+
+def _median_cell_area(cell_area_by_grid: Mapping[str, float] | pd.Series) -> float | None:
+    if isinstance(cell_area_by_grid, pd.Series):
+        values = cell_area_by_grid.dropna()
+        if values.empty:
+            return None
+        median_area = float(values.median())
+        return median_area if np.isfinite(median_area) and median_area > 0 else None
+
+    values = []
+    for value in cell_area_by_grid.values():
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(parsed) and parsed > 0:
+            values.append(parsed)
+    if not values:
+        return None
+    median_area = float(np.median(values))
+    return median_area if np.isfinite(median_area) and median_area > 0 else None

@@ -61,6 +61,8 @@ class FeatureValue(BaseModel):
 class ExplanationRow(BaseModel):
     feature_key: str
     feature_label: str
+    value: float | None = None
+    reference_value: float | None = None
     contribution: float
     direction: Literal["positive", "negative", "neutral"]
 
@@ -80,7 +82,7 @@ class GridResponse(BaseModel):
 
 class ScenarioRequest(BaseModel):
     grid_id: str
-    year: Literal[2024, 2025] = 2024
+    year: Literal[2024, 2025] = 2025
     model_id: str = "xgboost_logistic"
     forest_cover_pct: float = Field(ge=0.0, le=100.0)
     forest_loss_ha: float = Field(ge=0.0)
@@ -95,5 +97,7 @@ class ScenarioResponse(BaseModel):
     scenario_predicted: float = Field(ge=0.0, le=1.0)
     delta: float
     thresholds: Thresholds
+    baseline_features: list[FeatureValue]
+    scenario_features: list[FeatureValue]
     baseline_explanation: list[ExplanationRow]
     scenario_explanation: list[ExplanationRow]

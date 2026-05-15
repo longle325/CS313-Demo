@@ -12,16 +12,16 @@ type RawBiodiversityRow = Record<string, string | number | undefined>;
 export const METRICS: Record<MetricKey, MetricDefinition> = {
   predictedRichness: {
     key: 'predictedRichness',
-    label: 'Biodiversity richness index',
+    label: 'Vietnam Biodiversity richness index',
     shortLabel: 'Richness index',
     unit: '0–1 index',
-    description: 'Model forecast/projection on the same fixed 0–1 richness scale.',
+    description: 'Model forecast on the same fixed 0–1 richness scale.',
     palette: ['#8d1d2c', '#dfb43f', '#126b50'],
     format: (value) => formatNumber(value, 2),
   },
   normalizedRichness: {
     key: 'normalizedRichness',
-    label: 'Biodiversity richness index',
+    label: 'Vietnam Biodiversity richness index',
     shortLabel: 'Richness index',
     unit: '0–1 index',
     description: 'Observed species richness adjusted by log observation effort, capped at the train p99 and scaled to 0–1.',
